@@ -1,0 +1,142 @@
+import { useState } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useStore } from '@/store/useStore'
+import { api } from '@/api/client'
+import { AiCard, Card, CardTitle, Btn, Slider, Steps } from '@/components/ui'
+import { MOODS, getMoodItem, getMoodPeriod } from '@/utils'
+
+function getMoodAI(mood: number, energy: number): string {
+  if (mood <= 3)
+    return `Тяжёлый день — и это бывает. Когда настроение ${mood}/10, данные показывают: короткая прогулка поднимает его на 1-2 балла. Одна привычка сегодня — уже победа.`
+  if (mood <= 6)
+    return `Средний день (${mood}/10). Энергия ${energy}/10 — есть запас. По данным, 2+ привычки поднимают настроение к вечеру.`
+  return `Хорошее настроение ${mood}/10 и энергия ${energy}/10! Лучший момент для привычек — не откладывай.`
+}
+
+export default function Mood() {
+  const { tgUser, showToast, moodDraft, setMoodDraft, resetMoodDraft } = useStore()
+  const userId = tgUser?.id
+  const qc = useQueryClient()
+
+  const [step, setStep] = useState(1)
+  const [aiText, setAiText] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const period = getMoodPeriod()
+  const selectedMood = getMoodItem(moodDraft.val)
+
+  const saveMutation = useMutation({
+    mutationFn: () =>
+      api.mood.save({
+        user_id: userId!,
+        mood: moodDraft.val,
+        energy: moodDraft.energy,
+        anxiety: moodDraft.anxiety,
+        note: moodDraft.note,
+        period,
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['today', userId] })
+      const text = getMoodAI(moodDraft.val, moodDraft.energy)
+      setAiText(text)
+      setSaved(true)
+      showToast('✓ Настроение сохранено!')
+    },
+  })
+
+  if (saved) {
+    return (
+      <div className="pt-[22px] page-enter flex flex-col items-center justify-center min-h-[70vh] text-center">
+        <div className="text-[64px] mb-4">✓</div>
+        <h2 className="font-serif text-[22px] font-bold mb-2">Записано!</h2>
+        <p className="text-txt-2 text-[14px] mb-8">
+          {selectedMood.e} {selectedMood.l} · энергия {moodDraft.energy}/10 · тревога {moodDraft.anxiety}/10
+        </p>
+        <AiCard>{aiText}</AiCard>
+        <Btn onClick={() => { setSaved(false); setStep(1); resetMoodDraft() }} variant="secondary">
+          Записать ещё раз
+        </Btn>
+      </div>
+    )
+  }
+
+  return (
+    <div className="pt-[22px] page-enter">
+      <div className="mb-[14px]">
+        <div className="text-[12px] text-txt-2">
+          {period === 'morning' ? '☀️ Утренняя отметка' : '🌙 Вечерняя отметка'}
+        </div>
+        <h1 className="font-serif text-[25px] font-bold text-green-dark mt-[3px]">Настроение 🌸</h1>
+      </div>
+
+      <Steps total={3} current={step} />
+
+      {/* Step 1: Mood emoji */}
+      {step === 1 && (
+        <div className="page-enter">
+          <Card>
+            <span className="absolute right-[-8px] top-[-8px] text-[56px] opacity-[0.07] rotate-[18deg] pointer-events-none">🌿</span>
+            <CardTitle>Как себя чувствуешь?</CardTitle>
+            <div className="text-[50px] text-center my-[14px]">{selectedMood.e}</div>
+            <div className="text-[14px] text-txt-2 text-center mb-[14px]">{selectedMood.l}</div>
+            <div className="flex gap-[3px] flex-wrap justify-center mb-[4px]">
+              {MOODS.map((m) => (
+                <button
+                  key={m.v}
+                  onClick={() => setMoodDraft({ val: m.v })}
+                  className="text-[26px] bg-transparent border-2 rounded-[12px] p-[5px] cursor-pointer transition-all"
+                  style={{
+                    borderColor: moodDraft.val === m.v ? 'var(--green)' : 'transparent',
+                    background: moodDraft.val === m.v ? 'var(--green-light)' : 'none',
+                    transform: moodDraft.val === m.v ? 'scale(1.2)' : 'scale(1)',
+                    filter: moodDraft.val === m.v ? 'none' : 'grayscale(0.5) opacity(0.55)',
+                  }}
+                >
+                  {m.e}
+                </button>
+              ))}
+            </div>
+          </Card>
+          <Btn onClick={() => setStep(2)}>Далее →</Btn>
+        </div>
+      )}
+
+      {/* Step 2: Sliders */}
+      {step === 2 && (
+        <div className="page-enter">
+          <Card>
+            <CardTitle>Уточни состояние</CardTitle>
+            <Slider label="⚡ Энергия" value={moodDraft.energy} onChange={v => setMoodDraft({ energy: v })} color="var(--gold)" />
+            <Slider label="😰 Тревога" value={moodDraft.anxiety} onChange={v => setMoodDraft({ anxiety: v })} color="var(--terra)" />
+          </Card>
+          <div className="flex gap-[9px]">
+            <Btn onClick={() => setStep(1)} variant="secondary" fullWidth={false} className="px-[18px]">←</Btn>
+            <Btn onClick={() => setStep(3)}>Далее →</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* Step 3: Note + save */}
+      {step === 3 && (
+        <div className="page-enter">
+          <Card>
+            <CardTitle>Что влияет?</CardTitle>
+            <textarea
+              value={moodDraft.note}
+              onChange={e => setMoodDraft({ note: e.target.value })}
+              rows={4}
+              placeholder="Плохо спал, много работы, хорошая прогулка..."
+              className="w-full bg-bg-2 border-[1.5px] border-transparent focus:border-green focus:bg-white rounded-[11px] p-[12px] text-[14px] outline-none resize-none transition-colors"
+            />
+          </Card>
+          <div className="flex gap-[9px]">
+            <Btn onClick={() => setStep(2)} variant="secondary" fullWidth={false} className="px-[18px]">←</Btn>
+            <Btn onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+              {saveMutation.isPending ? '⏳ Сохраняю...' : '✓ Сохранить'}
+            </Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

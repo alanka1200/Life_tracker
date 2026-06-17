@@ -1,0 +1,222 @@
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useStore } from '@/store/useStore'
+import { api } from '@/api/client'
+import { AiCard, Card, CardTitle, Btn, ProgressBar } from '@/components/ui'
+import type { Goal } from '@/types'
+
+const EMOJI_LIST = ['💧','🚶','📵','📖','🏋️','🧘','✍️','🥗','😴','🌿','🎯','📝','🍎','🚴','🧹','🧠','💊','🏃']
+
+function getHabitsAI(done: number, total: number): string {
+  if (done === 0) return 'Начни с одной привычки — самый сложный шаг уже позади.'
+  if (done === total && total > 0) return '🔥 Всё выполнено! Такие дни коррелируют с лучшим сном — проверим завтра.'
+  if (done >= Math.ceil(total / 2)) return `${done}/${total} — отлично! Стрики растут. Это лучший предиктор долгосрочного результата.`
+  return `${done}/${total} — хороший темп! По данным, ещё одна привычка поднимет настроение вечером.`
+}
+
+export default function Habits() {
+  const { tgUser, habits: localHabits, setHabits, toggleHabitLocal, showToast } = useStore()
+  const userId = tgUser?.id
+  const qc = useQueryClient()
+
+  const [showAdd, setShowAdd] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [emoji, setEmoji] = useState('✨')
+  const [newGoal, setNewGoal] = useState('')
+  const [localGoals, setLocalGoals] = useState<Goal[]>([])
+
+  // Load habits from API
+  useQuery({
+    queryKey: ['habits', userId],
+    queryFn: async () => {
+      const data = await api.habits.list(userId!)
+      setHabits(data)
+      return data
+    },
+    enabled: !!userId,
+  })
+
+  // Load goals
+  const { data: goals = localGoals } = useQuery({
+    queryKey: ['goals', userId],
+    queryFn: () => api.goals.list(userId!),
+    enabled: !!userId,
+  })
+
+  const toggleMutation = useMutation({
+    mutationFn: (habitId: number) => api.habits.toggle({ habit_id: habitId, user_id: userId! }),
+    onMutate: (id) => toggleHabitLocal(id),
+    onSuccess: (data, id) => {
+      if (data.completed) {
+        const h = localHabits.find(x => x.id === id)
+        if (h) showToast(`${h.emoji} ${h.name} — выполнено!`)
+      }
+      qc.invalidateQueries({ queryKey: ['today', userId] })
+    },
+  })
+
+  const addHabitMutation = useMutation({
+    mutationFn: () => api.habits.create({ user_id: userId!, name: newName.trim(), emoji }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['habits', userId] })
+      setNewName(''); setEmoji('✨'); setShowAdd(false)
+      showToast('🌱 Привычка добавлена!')
+    },
+  })
+
+  const addGoalMutation = useMutation({
+    mutationFn: () => api.goals.create({ user_id: userId!, title: newGoal.trim() }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['goals', userId] })
+      setNewGoal('')
+      showToast('🎯 Цель добавлена!')
+    },
+    onMutate: () => {
+      if (!userId) {
+        setLocalGoals(prev => [...prev, { id: Date.now(), user_id: 0, title: newGoal, description: '', target_date: null, progress: 0, is_done: false, created_at: new Date().toISOString() }])
+      }
+    },
+  })
+
+  const updateProgressMutation = useMutation({
+    mutationFn: ({ id, progress }: { id: number; progress: number }) =>
+      api.goals.updateProgress(id, progress),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['goals', userId] }),
+  })
+
+  const done = localHabits.filter(h => h.completed_today)
+  const remaining = localHabits.filter(h => !h.completed_today)
+
+  return (
+    <div className="pt-[22px] page-enter">
+      <div className="flex items-end justify-between mb-[14px]">
+        <div>
+          <div className="text-[12px] text-txt-2">Привычки + Цели + AI-коуч</div>
+          <h1 className="font-serif text-[25px] font-bold text-green-dark mt-[3px]">Цели 🌱</h1>
+        </div>
+        <button
+          onClick={() => setShowAdd(!showAdd)}
+          className="px-[14px] py-[8px] text-[12.5px] font-semibold rounded-[10px] bg-bg-2 text-txt border-none cursor-pointer active:opacity-80"
+        >
+          + Добавить
+        </button>
+      </div>
+
+      <AiCard label="✦ AI-коуч">{getHabitsAI(done.length, localHabits.length)}</AiCard>
+
+      {/* Progress */}
+      <Card>
+        <div className="flex justify-between items-center mb-[9px]">
+          <span className="text-[13px] text-txt-2">Прогресс сегодня</span>
+          <span className="font-bold text-green text-[13px]">{done.length}/{localHabits.length}</span>
+        </div>
+        <ProgressBar value={done.length} max={localHabits.length} />
+      </Card>
+
+      {/* Add habit form */}
+      {showAdd && (
+        <Card className="page-enter">
+          <CardTitle>🌿 Новая привычка</CardTitle>
+          <div className="flex flex-wrap gap-[5px] mb-[11px]">
+            {EMOJI_LIST.map(e => (
+              <button key={e} onClick={() => setEmoji(e)}
+                className="text-[22px] cursor-pointer px-[6px] py-[4px] rounded-[8px] border-none transition-colors"
+                style={{ background: emoji === e ? 'var(--green-light)' : 'transparent' }}>
+                {e}
+              </button>
+            ))}
+          </div>
+          <div className="text-[26px] text-center mb-[10px]">{emoji}</div>
+          <input
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && newName.trim() && addHabitMutation.mutate()}
+            placeholder="Название привычки..."
+            className="w-full bg-bg-2 border-[1.5px] border-transparent focus:border-green focus:bg-white rounded-[11px] p-[12px] text-[14px] outline-none mb-[9px]"
+          />
+          <div className="flex gap-[8px]">
+            <Btn onClick={() => setShowAdd(false)} variant="secondary" fullWidth={false} className="px-[14px]">Отмена</Btn>
+            <Btn onClick={() => addHabitMutation.mutate()} disabled={!newName.trim() || addHabitMutation.isPending}>Добавить</Btn>
+          </div>
+        </Card>
+      )}
+
+      {/* Remaining habits */}
+      {remaining.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-[.9px] text-txt-3 font-semibold mb-[8px] mt-[14px]">Осталось</div>
+          {remaining.map(h => (
+            <div key={h.id} onClick={() => !toggleMutation.isPending && toggleMutation.mutate(h.id)}
+              className="flex items-center gap-[11px] p-[13px] bg-card rounded-[13px] mb-[7px] shadow-card cursor-pointer active:opacity-80 select-none">
+              <div className="w-[25px] h-[25px] rounded-full border-2 border-bg-3 bg-white flex items-center justify-center flex-shrink-0 text-[12px]" />
+              <div className="flex-1 min-w-0">
+                <div className="text-[13.5px] font-medium truncate">{h.emoji} {h.name}</div>
+              </div>
+              {h.streak > 0 && (
+                <div className="text-[11px] text-gold font-semibold bg-gold-light px-[8px] py-[3px] rounded-[8px] flex-shrink-0">
+                  🔥 {h.streak}д
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Done habits */}
+      {done.length > 0 && (
+        <>
+          <div className="text-[11px] uppercase tracking-[.9px] text-txt-3 font-semibold mb-[8px] mt-[14px]">Выполнено ✓</div>
+          {done.map(h => (
+            <div key={h.id} onClick={() => !toggleMutation.isPending && toggleMutation.mutate(h.id)}
+              className="flex items-center gap-[11px] p-[13px] bg-[#f0f7f2] rounded-[13px] mb-[7px] shadow-card cursor-pointer active:opacity-80 select-none">
+              <div className="w-[25px] h-[25px] rounded-full bg-green border-2 border-green flex items-center justify-center text-white text-[12px] flex-shrink-0">✓</div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13.5px] font-medium truncate text-txt-2 line-through">{h.emoji} {h.name}</div>
+              </div>
+              {h.streak > 0 && (
+                <div className="text-[11px] text-gold font-semibold bg-gold-light px-[8px] py-[3px] rounded-[8px] flex-shrink-0">
+                  🔥 {h.streak}д
+                </div>
+              )}
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* Goals */}
+      <div className="text-[11px] uppercase tracking-[.9px] text-txt-3 font-semibold mb-[8px] mt-[20px]">🎯 Цели</div>
+      <Card>
+        <div className="flex gap-[8px] mb-[11px]">
+          <input
+            value={newGoal}
+            onChange={e => setNewGoal(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && newGoal.trim() && addGoalMutation.mutate()}
+            placeholder="Добавить цель..."
+            className="flex-1 bg-bg-2 border-[1.5px] border-transparent focus:border-green focus:bg-white rounded-[11px] p-[12px] text-[14px] outline-none"
+          />
+          <button
+            onClick={() => newGoal.trim() && addGoalMutation.mutate()}
+            className="px-[14px] py-[8px] bg-green text-white rounded-[10px] text-[14px] font-semibold border-none cursor-pointer active:opacity-80"
+          >+</button>
+        </div>
+        {goals.length === 0 ? (
+          <div className="text-[13px] text-txt-3">Нет целей — добавь первую</div>
+        ) : (
+          goals.map(g => (
+            <div key={g.id} className="border-l-4 border-green pl-[14px] pr-[8px] py-[12px] mb-[8px] bg-green-xs rounded-r-[12px]">
+              <div className="font-semibold text-[14px] mb-[6px]">{g.title}</div>
+              <div className="text-[12px] text-txt-2 mb-[7px]">{g.progress}% выполнено</div>
+              <ProgressBar value={g.progress} max={100} />
+              <input
+                type="range" min={0} max={100} value={g.progress}
+                onChange={e => updateProgressMutation.mutate({ id: g.id, progress: Number(e.target.value) })}
+                style={{ accentColor: 'var(--green)', marginTop: '8px' }}
+                className="w-full"
+              />
+            </div>
+          ))
+        )}
+      </Card>
+    </div>
+  )
+}

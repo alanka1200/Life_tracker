@@ -1,0 +1,104 @@
+// ── Telegram ──────────────────────────────────────────
+export function getTgUser() {
+  return window.Telegram?.WebApp?.initDataUnsafe?.user ?? null
+}
+
+export function getTgInitData() {
+  return window.Telegram?.WebApp?.initData ?? ''
+}
+
+// ── Time ──────────────────────────────────────────────
+export function calcSleepDuration(start: string, end: string): number {
+  const [sh, sm] = start.split(':').map(Number)
+  const [eh, em] = end.split(':').map(Number)
+  let mins = eh * 60 + em - (sh * 60 + sm)
+  if (mins < 0) mins += 1440
+  return +(mins / 60).toFixed(2)
+}
+
+export function formatDuration(hours: number): string {
+  const h = Math.floor(hours)
+  const m = Math.round((hours - h) * 60)
+  return `${h}ч ${m}м`
+}
+
+export function getGreeting(): string {
+  const h = new Date().getHours()
+  if (h < 12) return '☀️ Доброе утро'
+  if (h < 17) return '🌞 Добрый день'
+  return '🌙 Добрый вечер'
+}
+
+export function getMoodPeriod(): 'morning' | 'evening' {
+  return new Date().getHours() < 14 ? 'morning' : 'evening'
+}
+
+export function getWeekDays(): string[] {
+  const days: string[] = []
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date()
+    d.setDate(d.getDate() - i)
+    days.push(d.toISOString().split('T')[0])
+  }
+  return days
+}
+
+export function getDayLabel(dateStr: string): string {
+  const labels = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб']
+  return labels[new Date(dateStr).getDay()]
+}
+
+export function formatDate(): string {
+  const d = new Date()
+  const months = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек']
+  const days = ['вс','пн','вт','ср','чт','пт','сб']
+  return `${d.getDate()} ${months[d.getMonth()]}, ${days[d.getDay()]}`
+}
+
+// ── Image ─────────────────────────────────────────────
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      resolve(result.split(',')[1])
+    }
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+// ── Avatar ────────────────────────────────────────────
+const AVATAR_COLORS = ['#4a7c59','#7d5a3c','#3a7bd5','#a0522d','#5b6b8a','#6b4f8a']
+
+export function getAvatarColor(userId: number): string {
+  return AVATAR_COLORS[userId % AVATAR_COLORS.length]
+}
+
+// ── Mood ─────────────────────────────────────────────
+export const MOODS = [
+  { v: 1, e: '😞', l: 'Ужасно' },
+  { v: 2, e: '😟', l: 'Плохо' },
+  { v: 3, e: '😕', l: 'Так себе' },
+  { v: 4, e: '😐', l: 'Нейтрально' },
+  { v: 5, e: '🙂', l: 'Норм' },
+  { v: 6, e: '😊', l: 'Хорошо' },
+  { v: 7, e: '😄', l: 'Отлично' },
+  { v: 8, e: '🤩', l: 'Класс!' },
+  { v: 9, e: '🥳', l: 'Огонь!' },
+  { v: 10, e: '🔥', l: 'Топ!' },
+]
+
+export function getMoodItem(v: number) {
+  return MOODS.find((m) => m.v === v) ?? MOODS[4]
+}
+
+// ── Clipboard ─────────────────────────────────────────
+export async function copyToClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    return false
+  }
+}

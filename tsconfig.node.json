@@ -1,0 +1,158 @@
+import { useQuery } from '@tanstack/react-query'
+import { useStore } from '@/store/useStore'
+import { api } from '@/api/client'
+import { AiCard, Card, CardTitle, ProgressBar } from '@/components/ui'
+import { getGreeting, formatDate, getDayLabel, getWeekDays, getMoodItem, copyToClipboard } from '@/utils'
+
+function DashMetric({
+  icon, value, label, sub, onClick,
+}: {
+  icon: string; value: string; label: string; sub?: string; onClick?: () => void
+}) {
+  return (
+    <div
+      onClick={onClick}
+      className="flex flex-col items-center justify-center bg-card rounded-[15px] p-4 shadow-card text-center cursor-pointer active:scale-[0.97] transition-transform"
+    >
+      <span className="text-[24px] mb-[6px]">{icon}</span>
+      <div className="font-serif text-[20px] font-bold text-green-dark leading-none">{value}</div>
+      <div className="text-[10.5px] text-txt-2 mt-[3px]">{label}</div>
+      {sub && <div className="text-[10px] text-txt-3 mt-[2px]">{sub}</div>}
+    </div>
+  )
+}
+
+export default function Dashboard() {
+  const { tgUser, setPage, habits } = useStore()
+  const userId = tgUser?.id
+
+  const { data: today } = useQuery({
+    queryKey: ['today', userId],
+    queryFn: () => api.stats.today(userId!),
+    enabled: !!userId,
+    refetchInterval: 60_000,
+  })
+
+  const { data: week } = useQuery({
+    queryKey: ['week', userId],
+    queryFn: () => api.stats.week(userId!),
+    enabled: !!userId,
+  })
+
+  const { data: ref } = useQuery({
+    queryKey: ['referral', userId],
+    queryFn: () => api.referral.get(userId!),
+    enabled: !!userId,
+  })
+
+  // Metrics
+  const sleepVal = today?.sleep ? `${today.sleep.duration_h.toFixed(1)}ч` : '—'
+  const sleepSub = today?.sleep ? `качество ${today.sleep.quality}/10` : 'не записан'
+  const moodItem = today?.mood ? getMoodItem(today.mood.mood) : null
+  const moodVal = today?.mood ? `${today.mood.mood}/10` : '—'
+  const moodSub = today?.mood ? `энергия ${today.mood.energy}/10` : 'не отмечено'
+  const habitsLocal = { done: habits.filter(h => h.completed_today).length, total: habits.length }
+  const habDone = today?.habits?.done ?? habitsLocal.done
+  const habTotal = today?.habits?.total ?? habitsLocal.total
+  const kcal = today?.kcal ?? 0
+
+  // AI insight
+  let aiText = 'Заполни все трекеры — покажу связь между сном, настроением и привычками.'
+  if (today?.mood) {
+    const m = today.mood.mood
+    if (m >= 8) aiText = `Отличное настроение! ${m}/10 — используй этот день максимально. Закрой все привычки, пока есть энергия.`
+    else if (m >= 6) aiText = `Хороший день — ${m}/10. Стабильность лучше редких пиков. Держи темп.`
+    else if (m >= 4) aiText = `Средний день (${m}/10). По данным, 2-3 привычки поднимают настроение к вечеру. Попробуй.`
+    else aiText = `Тяжёлый день (${m}/10). Одна небольшая победа сегодня — уже хорошо. Не ломай стрик.`
+  }
+
+  // Week bars
+  const weekDays = getWeekDays()
+  const moodByDate = Object.fromEntries((week?.mood ?? []).map(r => [r.entry_date, r.am]))
+
+  const handleCopyRef = async () => {
+    if (!ref) return
+    const ok = await copyToClipboard(ref.bot_link)
+    if (!ok) alert(`Код: ${ref.referral_code}`)
+  }
+
+  return (
+    <div className="pt-[22px] page-enter">
+      {/* Header */}
+      <div className="flex items-end justify-between mb-[14px]">
+        <div>
+          <div className="text-[12px] text-txt-2">{getGreeting()}</div>
+          <h1 className="font-serif text-[25px] font-bold text-green-dark mt-[3px]">
+            {tgUser?.first_name ?? 'Life OS'}
+          </h1>
+        </div>
+        <span className="inline-flex items-center px-[11px] py-[5px] rounded-full bg-green-light text-green-dark text-[12px] font-medium">
+          {formatDate()}
+        </span>
+      </div>
+
+      <AiCard>{aiText}</AiCard>
+
+      {/* 4 metrics */}
+      <div className="grid grid-cols-2 gap-[10px] mb-[11px]">
+        <DashMetric icon="🌙" value={sleepVal} label="Сон" sub={sleepSub} onClick={() => setPage('sleep')} />
+        <DashMetric icon={moodItem?.e ?? '🌸'} value={moodVal} label="Настроение" sub={moodSub} onClick={() => setPage('mood')} />
+        <DashMetric icon="🌱" value={`${habDone}/${habTotal}`} label="Привычки" sub={habDone === habTotal && habTotal > 0 ? '🔥 все!' : 'выполнено'} onClick={() => setPage('habits')} />
+        <DashMetric icon="🥗" value={kcal > 0 ? String(kcal) : '—'} label="Питание" sub="ккал сегодня" onClick={() => setPage('nutrition')} />
+      </div>
+
+      {/* Week mood chart */}
+      <Card>
+        <CardTitle>📊 Настроение — 7 дней</CardTitle>
+        <div className="flex gap-[4px] items-end h-[56px]">
+          {weekDays.map((day, i) => {
+            const val = moodByDate[day] ?? 0
+            const pct = Math.round((val / 10) * 100)
+            const isToday = i === 6
+            return (
+              <div key={day} className="flex flex-col items-center gap-[3px] flex-1">
+                <div
+                  className="w-full rounded-t-[4px] min-h-[3px] transition-all duration-500"
+                  style={{
+                    height: `${pct}%`,
+                    background: val >= 7 ? '#4a7c59' : val > 0 ? '#a4ac86' : '#edeae0',
+                  }}
+                />
+                <span className={`text-[9px] ${isToday ? 'text-green font-bold' : 'text-txt-3'}`}>
+                  {getDayLabel(day)}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      </Card>
+
+      {/* Habits progress */}
+      <Card>
+        <div className="flex justify-between items-center mb-[9px]">
+          <span className="text-[13px] text-txt-2">Прогресс сегодня</span>
+          <span className="font-bold text-green text-[13px]">{habDone}/{habTotal}</span>
+        </div>
+        <ProgressBar value={habDone} max={habTotal} />
+      </Card>
+
+      {/* Referral */}
+      {ref && (
+        <div className="rounded-card p-[18px] mb-[11px]"
+          style={{ background: 'linear-gradient(135deg,#f5f3ed 0%,#e8f0e3 100%)', border: '1.5px solid #d4e8da' }}>
+          <div className="text-[10px] uppercase tracking-[1px] text-sage font-semibold mb-[6px]">🔗 Реферальная программа</div>
+          <div className="font-serif text-[26px] font-bold text-green-dark text-center tracking-[3px] my-[10px]">
+            {ref.referral_code}
+          </div>
+          <p className="text-[12px] text-txt-2 text-center mb-[12px]">3 реферала = 1 месяц Pro бесплатно 🎁</p>
+          <button
+            onClick={handleCopyRef}
+            className="w-full py-[10px] rounded-[10px] border-[1.5px] border-green text-green text-[13px] font-semibold bg-transparent active:opacity-80"
+          >
+            📋 Скопировать реф-ссылку
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}

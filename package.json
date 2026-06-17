@@ -1,0 +1,198 @@
+import { useState, useRef } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useStore } from '@/store/useStore'
+import { api } from '@/api/client'
+import { AiCard, Card, CardTitle, Btn } from '@/components/ui'
+import { fileToBase64 } from '@/utils'
+import type { FoodAnalysis } from '@/types'
+
+const MOCK_MEALS: FoodAnalysis[] = [
+  { name: 'Гречка с куриной грудкой', kcal: 380, protein_g: 32, fat_g: 8, carb_g: 42, comment: 'Хороший баланс белка и углеводов. Такой обед поддерживает стабильную энергию до вечера.' },
+  { name: 'Салат с овощами и маслом', kcal: 145, protein_g: 3, fat_g: 10, carb_g: 12, comment: 'Лёгкое блюдо, но мало белка. Добавь яйцо или тунца для насыщения.' },
+  { name: 'Овсянка с ягодами', kcal: 290, protein_g: 9, fat_g: 6, carb_g: 48, comment: 'Отличный завтрак — медленные углеводы дадут энергию на 3-4 часа.' },
+]
+
+export default function Nutrition() {
+  const { tgUser, showToast } = useStore()
+  const userId = tgUser?.id
+  const qc = useQueryClient()
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const [preview, setPreview] = useState<string | null>(null)
+  const [analysis, setAnalysis] = useState<FoodAnalysis | null>(null)
+  const [aiComment, setAiComment] = useState('Сфотографируй блюдо — посчитаю КБЖУ и дам советы.')
+  const [analyzing, setAnalyzing] = useState(false)
+
+  const { data: todayData, refetch } = useQuery({
+    queryKey: ['meals-today', userId],
+    queryFn: () => api.nutrition.todayMeals(userId!),
+    enabled: !!userId,
+  })
+
+  const saveMealMutation = useMutation({
+    mutationFn: (a: FoodAnalysis) =>
+      api.nutrition.saveMeal({
+        user_id: userId!,
+        name: a.name, kcal: a.kcal,
+        protein_g: a.protein_g, fat_g: a.fat_g, carb_g: a.carb_g,
+        ai_comment: a.comment,
+      }),
+    onSuccess: () => {
+      refetch()
+      qc.invalidateQueries({ queryKey: ['today', userId] })
+      setPreview(null)
+      setAnalysis(null)
+      setAiComment('Сфотографируй ещё одно блюдо или перейди к другим трекерам.')
+      showToast('✓ Блюдо добавлено!')
+    },
+  })
+
+  const handlePhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setPreview(URL.createObjectURL(file))
+    setAnalysis(null)
+    setAnalyzing(true)
+    setAiComment('⏳ Анализирую блюдо...')
+
+    try {
+      let result: FoodAnalysis
+      if (userId) {
+        const b64 = await fileToBase64(file)
+        result = await api.nutrition.analyzePhoto({ user_id: userId, image_b64: b64, image_type: file.type })
+      } else {
+        // Mock fallback
+        await new Promise(r => setTimeout(r, 1500))
+        result = MOCK_MEALS[Math.floor(Math.random() * MOCK_MEALS.length)]
+      }
+      setAnalysis(result)
+      setAiComment(result.comment)
+    } catch {
+      setAiComment('Не удалось проанализировать фото. Введи данные вручную.')
+    } finally {
+      setAnalyzing(false)
+      e.target.value = ''
+    }
+  }
+
+  const meals = todayData?.meals ?? []
+  const totals = todayData?.totals ?? { kcal: 0, prot: 0, fat: 0, carb: 0 }
+
+  return (
+    <div className="pt-[22px] page-enter">
+      <div className="flex items-end justify-between mb-[14px]">
+        <div>
+          <div className="text-[12px] text-txt-2">Фото → AI → КБЖУ</div>
+          <h1 className="font-serif text-[25px] font-bold text-green-dark mt-[3px]">Питание 🥗</h1>
+        </div>
+        {totals.kcal > 0 && (
+          <span className="inline-flex items-center px-[11px] py-[5px] rounded-full bg-gold-light text-[#7a5200] text-[12px] font-medium">
+            {totals.kcal} ккал
+          </span>
+        )}
+      </div>
+
+      <AiCard>{aiComment}</AiCard>
+
+      {/* Photo zone */}
+      {!preview && (
+        <div
+          onClick={() => fileRef.current?.click()}
+          className="border-2 border-dashed border-olive rounded-card p-7 text-center cursor-pointer bg-[#f8f6f0] hover:border-green hover:bg-green-xs transition-colors mb-[12px]"
+        >
+          <div className="text-[36px] mb-[8px]">📷</div>
+          <p className="text-[13px] text-txt-2">Нажми чтобы сфотографировать</p>
+          <p className="text-[11px] text-txt-3 mt-1">или выбери из галереи</p>
+        </div>
+      )}
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhoto} />
+
+      {/* Preview */}
+      {preview && (
+        <img src={preview} alt="Блюдо" className="w-full rounded-[13px] mb-[11px] max-h-[220px] object-cover" />
+      )}
+
+      {/* Analyzing loader */}
+      {analyzing && (
+        <div className="flex items-center gap-2 text-txt-2 text-[13px] py-3 mb-[11px]">
+          <span className="inline-flex gap-1">
+            {[0, 1, 2].map(i => (
+              <span key={i} className="w-[6px] h-[6px] rounded-full bg-green inline-block"
+                style={{ animation: `bounce 1.2s ${i * 0.2}s infinite` }} />
+            ))}
+          </span>
+          Анализирую...
+        </div>
+      )}
+
+      {/* Analysis result */}
+      {analysis && !analyzing && (
+        <Card>
+          <CardTitle>🍽 {analysis.name}</CardTitle>
+          <div className="grid grid-cols-2 gap-[9px] mb-[13px]">
+            <div className="col-span-2 bg-bg-2 rounded-[11px] p-[12px]">
+              <div className="text-[11px] text-txt-2 mb-[3px]">Калории</div>
+              <span className="font-serif text-[20px] font-bold text-green-dark">{analysis.kcal}</span>
+              <span className="text-[11px] text-txt-3 ml-1">ккал</span>
+            </div>
+            {[
+              { label: 'Белки', val: analysis.protein_g },
+              { label: 'Жиры', val: analysis.fat_g },
+              { label: 'Углеводы', val: analysis.carb_g },
+            ].map(({ label, val }) => (
+              <div key={label} className="bg-bg-2 rounded-[11px] p-[12px]">
+                <div className="text-[11px] text-txt-2 mb-[3px]">{label}</div>
+                <span className="font-serif text-[20px] font-bold text-green-dark">{val}</span>
+                <span className="text-[11px] text-txt-3 ml-1">г</span>
+              </div>
+            ))}
+          </div>
+          <Btn onClick={() => saveMealMutation.mutate(analysis)} disabled={saveMealMutation.isPending}>
+            {saveMealMutation.isPending ? '⏳ Сохраняю...' : '✓ Добавить в дневник'}
+          </Btn>
+          <button
+            onClick={() => { setPreview(null); setAnalysis(null) }}
+            className="w-full mt-[8px] py-[10px] text-[13px] text-txt-2 bg-transparent border-none cursor-pointer"
+          >
+            Переснять
+          </button>
+        </Card>
+      )}
+
+      {/* Today's diary */}
+      <Card>
+        <CardTitle>📋 Дневник питания</CardTitle>
+        {meals.length === 0 ? (
+          <div className="text-center text-txt-3 text-[13px] py-4">Нет записей</div>
+        ) : (
+          <>
+            {meals.map(m => (
+              <div key={m.id} className="flex justify-between py-[8px] border-b border-bg-2 last:border-0">
+                <span className="text-[13px]">🍽 {m.name}</span>
+                <span className="text-[13px] font-semibold text-green-dark">{m.kcal} ккал</span>
+              </div>
+            ))}
+            <div className="flex justify-between mt-[11px] pt-[11px] border-t border-bg-2">
+              <span className="text-[13px] text-txt-2">Итого</span>
+              <span className="font-bold text-green-dark">{totals.kcal} ккал</span>
+            </div>
+            <div className="grid grid-cols-3 gap-[8px] mt-[10px]">
+              {[
+                { label: 'Белки', val: Math.round(totals.prot) },
+                { label: 'Жиры', val: Math.round(totals.fat) },
+                { label: 'Углеводы', val: Math.round(totals.carb) },
+              ].map(({ label, val }) => (
+                <div key={label} className="text-center bg-bg-2 rounded-[10px] p-[8px]">
+                  <div className="font-serif text-[16px] font-bold text-green-dark">{val}г</div>
+                  <div className="text-[10px] text-txt-2">{label}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Card>
+
+      <style>{`@keyframes bounce{0%,80%,100%{transform:translateY(0)}40%{transform:translateY(-8px)}}`}</style>
+    </div>
+  )
+}

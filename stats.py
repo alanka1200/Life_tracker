@@ -1,0 +1,12 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.12
+asyncpg==0.29.0
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-dotenv==1.0.1
+aiogram==3.13.1
+anthropic==0.34.2
+httpx==0.27.2
+reportlab==4.2.5
+apscheduler==3.10.4
