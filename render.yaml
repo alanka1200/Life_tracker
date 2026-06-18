@@ -1,35 +1,51 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+services:
+  - type: web
+    name: life-os-api
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
 
-export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@': path.resolve(__dirname, './src'),
-    },
-  },
-  server: {
-    port: 5173,
-    proxy: {
-      '/api': {
-        target: process.env.VITE_API_URL || 'http://localhost:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api/, ''),
-      },
-    },
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: false,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          query: ['@tanstack/react-query'],
-          store: ['zustand'],
-        },
-      },
-    },
-  },
-})
+  - type: worker
+    name: life-os-bot
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.bot.bot
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: BOT_TOKEN
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: WEBAPP_URL
+        sync: false
+      - key: API_URL
+        sync: false
+
+  - type: web
+    name: life-os-twa
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        sync: false
